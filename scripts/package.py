@@ -20,6 +20,10 @@ if not args.binary and not args.target:
 root = Path(__file__).resolve().parent.parent
 name = f'digital-kvm-{args.platform}-{args.arch}'
 stage = root / 'dist' / name
+if stage.exists():
+    if stage.is_symlink() or not stage.resolve().is_relative_to((root / 'dist').resolve()):
+        raise RuntimeError('package staging directory is outside dist')
+    shutil.rmtree(stage)
 stage.mkdir(parents=True, exist_ok=True)
 executable = 'digital-kvm.exe' if args.platform == 'windows' else 'digital-kvm'
 binary = args.binary or root / 'target' / args.target / 'release' / executable

@@ -4,6 +4,8 @@ A small Windows, macOS, and Linux service that uses a physical USB switch to sel
 
 The Rust controller blocks on native device notifications while idle. It has no GUI, runtime Python dependency, or recurring USB scan. It supports multiple monitors with explicit identities and input mappings.
 
+The local Windows service measured 2.3 MiB private memory and 0.03 seconds additional CPU over roughly eight minutes; the GNU release executable is about 516 KiB. These are local measurements, not cross-platform guarantees.
+
 ## Current hardware and validation
 
 The supplied profiles describe the original setup: LG ULTRAGEAR+ with EDID `GSMC4B9`, DDC model `G930B`, and serial `602NTVSHW119`; Windows uses DisplayPort and the Mac uses USB-C. The retail model is inferred to be LG 52G930B-B, pending confirmation from its label. The HYTE case display is excluded.
@@ -18,7 +20,7 @@ This LG accepts alternate DDC commands: source address `0x50`, VCP `0xF4`, value
 | Apple Silicon macOS | IOKit notifications | IORegistry/IOAVService; LG alternate and standard DDC | LaunchDaemon after a boot-context probe; LaunchAgent fallback |
 | Linux x64 / ARM64 | libudev | DRM connector EDID and its `/dev/i2c-*` DDC adapter | systemd boot service; explicit user-service alternative |
 
-Mac monitor control requires Apple Silicon and uses private APIs. Windows monitor control currently requires NVIDIA. Linux requires systemd/logind, libudev, libsystemd, and an accessible GPU DDC adapter. Linux service lifecycle was tested under Ubuntu WSL; WSL did not expose the physical monitor or USB switch. Mac and physical Linux DDC behavior require local hardware checks. Full reboot, sleep, and two-host redundancy tests are outstanding. See [research and implementation plan](docs/implementation-plan.md) and [validation](docs/validation.md).
+Mac monitor control requires Apple Silicon and uses private APIs. Windows monitor control currently requires NVIDIA. Linux requires systemd/logind, libudev, libsystemd, and an accessible GPU DDC adapter. Linux service lifecycle was tested under Ubuntu WSL; WSL did not expose the physical monitor or USB switch. Mac and physical Linux DDC behavior require local hardware checks. Full reboot, sleep, and two-host redundancy tests are outstanding.
 
 ## Install a release package
 
@@ -137,6 +139,6 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo build --release --locked
 ```
 
-[GitHub Actions](https://github.com/Aenima4six2/digital-kvm/actions) runs native Windows x64, Mac ARM64, Linux x64, and Linux ARM64 builds on every push and PR. It tests Mac login installation/reinstallation on the native runner. Successful builds upload workflow packages; default-branch pushes publish commit-specific prereleases and tag pushes publish releases. Packages contain executable, configuration, installers, documentation, licenses, and metadata. Releases include SHA-256 checksums.
+[GitHub Actions](https://github.com/Aenima4six2/digital-kvm/actions) runs native Windows x64, Mac ARM64, Linux x64, and Linux ARM64 builds on every push and PR. Native runners test Windows and Mac login installation/reinstallation and Linux boot installation/reinstallation, with monitor writes disabled. Successful builds upload workflow packages; default-branch pushes publish commit-specific prereleases and tag pushes publish releases. Packages contain executable, configuration, installers, documentation, licenses, and metadata. Releases include SHA-256 checksums.
 
 Tests cover transitions, sleep suppression, exact hub selection, complementary profiles, strict configuration, CLI ordering, EDID identities/checksums, and DDC packets. Native builds and service tests do not prove firmware behavior on an untested machine.
