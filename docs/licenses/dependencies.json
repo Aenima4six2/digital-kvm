@@ -1,0 +1,74 @@
+﻿[
+    {
+        "name":  "itoa",
+        "version":  "1.0.18",
+        "license":  "MIT OR Apache-2.0",
+        "repository":  "https://github.com/dtolnay/itoa"
+    },
+    {
+        "name":  "libc",
+        "version":  "0.2.190",
+        "license":  "MIT OR Apache-2.0",
+        "repository":  "https://github.com/rust-lang/libc"
+    },
+    {
+        "name":  "memchr",
+        "version":  "2.8.3",
+        "license":  "Unlicense OR MIT",
+        "repository":  "https://github.com/BurntSushi/memchr"
+    },
+    {
+        "name":  "proc-macro2",
+        "version":  "1.0.107",
+        "license":  "MIT OR Apache-2.0",
+        "repository":  "https://github.com/dtolnay/proc-macro2"
+    },
+    {
+        "name":  "quote",
+        "version":  "1.0.47",
+        "license":  "MIT OR Apache-2.0",
+        "repository":  "https://github.com/dtolnay/quote"
+    },
+    {
+        "name":  "serde",
+        "version":  "1.0.229",
+        "license":  "MIT OR Apache-2.0",
+        "repository":  "https://github.com/serde-rs/serde"
+    },
+    {
+        "name":  "serde_core",
+        "version":  "1.0.229",
+        "license":  "MIT OR Apache-2.0",
+        "repository":  "https://github.com/serde-rs/serde"
+    },
+    {
+        "name":  "serde_derive",
+        "version":  "1.0.229",
+        "license":  "MIT OR Apache-2.0",
+        "repository":  "https://github.com/serde-rs/serde"
+    },
+    {
+        "name":  "serde_json",
+        "version":  "1.0.151",
+        "license":  "MIT OR Apache-2.0",
+        "repository":  "https://github.com/serde-rs/json"
+    },
+    {
+        "name":  "syn",
+        "version":  "3.0.6",
+        "license":  "MIT OR Apache-2.0",
+        "repository":  "https://github.com/dtolnay/syn"
+    },
+    {
+        "name":  "unicode-ident",
+        "version":  "1.0.26",
+        "license":  "(MIT OR Apache-2.0) AND Unicode-3.0",
+        "repository":  "https://github.com/dtolnay/unicode-ident"
+    },
+    {
+        "name":  "zmij",
+        "version":  "1.0.23",
+        "license":  "MIT",
+        "repository":  "https://github.com/dtolnay/zmij"
+    }
+]

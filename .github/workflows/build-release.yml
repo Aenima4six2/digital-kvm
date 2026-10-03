@@ -1,0 +1,128 @@
+name: Build and publish
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    name: ${{ matrix.platform }} ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2025
+            platform: windows
+            arch: x86_64
+            target: x86_64-pc-windows-msvc
+          - runner: macos-15
+            platform: macos
+            arch: aarch64
+            target: aarch64-apple-darwin
+          - runner: ubuntu-22.04
+            platform: linux
+            arch: x86_64
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-22.04-arm
+            platform: linux
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal --component clippy,rustfmt
+          rustup override set 1.99.0
+      - name: Formatting, behavior tests, lint, and native build
+        shell: bash
+        run: |
+          cargo fmt -- --check
+          cargo test --locked
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo build --release --locked --target '${{ matrix.target }}'
+      - name: Package Windows executable and installer
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: python scripts/package.py --platform windows --arch x86_64 --target x86_64-pc-windows-msvc
+      - name: Package Unix executable and installer
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          sh -n scripts/install-linux.sh scripts/uninstall-linux.sh scripts/install-macos.sh scripts/uninstall-macos.sh
+          python3 scripts/package.py --platform '${{ matrix.platform }}' --arch '${{ matrix.arch }}' --target '${{ matrix.target }}'
+      - name: Test Mac login installer and reinstall
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          archive="dist/packages/digital-kvm-macos-aarch64.tar.gz"
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          installer="$RUNNER_TEMP/digital-kvm-macos-aarch64/install-macos.sh"
+          sh "$installer" --login --dry-run "$GITHUB_WORKSPACE/examples/windows.json"
+          sh "$installer" --login --dry-run "$GITHUB_WORKSPACE/examples/windows.json"
+          sh "$RUNNER_TEMP/digital-kvm-macos-aarch64/uninstall-macos.sh"
+      - name: Test Windows login installer and reinstall
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          Expand-Archive dist/packages/digital-kvm-windows-x86_64.zip -DestinationPath $env:RUNNER_TEMP
+          $package=Join-Path $env:RUNNER_TEMP 'digital-kvm-windows-x86_64'
+          & "$package/install-windows.ps1" -Mode Login -DryRun -Config "$env:GITHUB_WORKSPACE/examples/windows.json"
+          & "$package/install-windows.ps1" -Mode Login -DryRun
+          & "$package/uninstall-windows.ps1"
+      - name: Test Linux boot installer and reinstall
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          tar -xzf 'dist/packages/digital-kvm-linux-${{ matrix.arch }}.tar.gz' -C "$RUNNER_TEMP"
+          package="$RUNNER_TEMP/digital-kvm-linux-${{ matrix.arch }}"
+          sudo sh "$package/install-linux.sh" --boot --dry-run "$GITHUB_WORKSPACE/examples/windows.json"
+          sudo sh "$package/install-linux.sh" --boot --dry-run
+          sudo sh "$package/uninstall-linux.sh"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digital-kvm-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/packages/*
+          if-no-files-found: error
+  publish:
+    needs: build
+    if: github.event_name == 'push' && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: digital-kvm-*
+          path: packages
+          merge-multiple: true
+      - name: Publish release with installers and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd packages && sha256sum *.zip *.tar.gz > SHA256SUMS.txt)
+          printf 'Native Windows, Apple Silicon macOS, and Linux packages with installers.\n\nCommit: %s\n\nConfigure the physical switch hub before enabling monitor control.\n' "$GITHUB_SHA" > release-notes.txt
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            tag="$GITHUB_REF_NAME"
+            flags=()
+          else
+            tag="build-$GITHUB_SHA"
+            flags=(--prerelease)
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" packages/* --clobber
+          else
+            gh release create "$tag" packages/* --target "$GITHUB_SHA" --title "Digital KVM $tag" --notes-file release-notes.txt "${flags[@]}"
+          fi

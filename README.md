@@ -1,115 +1,142 @@
 # Digital KVM
 
-A small Windows and macOS background program that connects an existing USB switch to monitor input selection. Pressing the physical switch moves the peripherals; Digital KVM selects the display input assigned to the computer receiving them.
+A small Windows, macOS, and Linux service that uses a physical USB switch to select monitor inputs. When the configured switch hub connects, it selects this computer's input. When that hub disconnects, it selects the other computer's input.
 
-The same Rust controller runs on both platforms, with native USB and monitor adapters. It blocks on operating-system notifications while idle. It supports multiple explicitly configured monitors and writes bounded JSON event logs.
+The Rust controller blocks on native device notifications while idle. It has no GUI, runtime Python dependency, or recurring USB scan. It supports multiple monitors with explicit identities and input mappings.
 
-## Windows quick start
+## Current hardware and validation
 
-The local build is in `dist/windows/digital-kvm.exe`. Its neighboring `config.json` supplies the default configuration.
+The supplied profiles describe the original setup: LG ULTRAGEAR+ with EDID `GSMC4B9`, DDC model `G930B`, and serial `602NTVSHW119`; Windows uses DisplayPort and the Mac uses USB-C. The retail model is inferred to be LG 52G930B-B, pending confirmation from its label. The HYTE case display is excluded.
 
-```powershell
-.\dist\windows\digital-kvm.exe status
-.\dist\windows\digital-kvm.exe watch
-.\dist\windows\digital-kvm.exe run --dry-run
-```
+The USB trigger is the physical switch's outer Genesys hub, `05E3:0610`. Windows observed that hub disappear and return during button presses. The profiles do not select a mouse or keyboard receiver. Its location differs on each host; macOS and Linux setup learn it from an actual disconnect/connect cycle.
 
-`watch` records all USB arrivals and removals, including hubs, to help choose a trigger. `run --dry-run` records the configured input transitions without sending monitor commands. Press the USB switch to the other computer, wait several seconds, then press it back. The selected receiver should disappear and return, and dry-run should report `usbc` followed by `dp`.
+This LG accepts alternate DDC commands: source address `0x50`, VCP `0xF4`, value `0xD0` for DisplayPort and `0xD1` for USB-C. Switching **DisplayPort → USB-C → DisplayPort through the Windows DisplayPort connection was visually confirmed**. Windows service-context writes also passed. Standard `0x60` readback did not reliably reflect the alternate switch, so its profiles deliberately leave `readback` empty. Accepted commands are logged as unverified; USB ownership events always send the command.
 
-For a bounded monitor test, keep the Mac connected and awake:
+| Platform | USB events | Monitor transport | Startup |
+| --- | --- | --- | --- |
+| Windows x64 | Configuration Manager device/hub callbacks | NVIDIA NVAPI; LG alternate and standard DDC | Native automatic SCM service after a service-context probe; login fallback |
+| Apple Silicon macOS | IOKit notifications | IORegistry/IOAVService; LG alternate and standard DDC | LaunchDaemon after a boot-context probe; LaunchAgent fallback |
+| Linux x64 / ARM64 | libudev | DRM connector EDID and its `/dev/i2c-*` DDC adapter | systemd boot service; explicit user-service alternative |
 
-```powershell
-.\dist\windows\digital-kvm.exe roundtrip --hold-ms 8000
-```
+Mac monitor control requires Apple Silicon and uses private APIs. Windows monitor control currently requires NVIDIA. Linux requires systemd/logind, libudev, libsystemd, and an accessible GPU DDC adapter. Linux service lifecycle was tested under Ubuntu WSL; WSL did not expose the physical monitor or USB switch. Mac and physical Linux DDC behavior require local hardware checks. Full reboot, sleep, and two-host redundancy tests are outstanding. See [research and implementation plan](docs/implementation-plan.md) and [validation](docs/validation.md).
 
-This sends the configured remote input, reports its readback after eight seconds, and restores the local input. A separate short-lived restore process also attempts restoration if the testing process is interrupted. Readback must confirm the actual switch; a successful transport call alone is not firmware confirmation. If neither process can reach the inactive port, restore DisplayPort with the monitor's physical controls and use the two-host deployment instead.
+## Install a release package
 
-After confirming the hardware, run in the foreground or install it for login startup:
+Extract the matching archive from [GitHub Releases](https://github.com/Aenima4six2/digital-kvm/releases). Rust is needed only for building from source. Every installer stops the existing service and processes running the installed executable, waits for exit, replaces the binary, preserves the configuration unless a replacement is supplied, and restarts the utility.
 
-```powershell
-.\dist\windows\digital-kvm.exe run
-powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
-```
+The supplied identities belong to the original setup. For another setup, use `devices` and `monitors` and edit `config.json` first.
 
-The installer copies the executable and configuration to `%LOCALAPPDATA%\DigitalKvm`, adds a current-user login startup entry, and starts a hidden background process. It needs no administrator access. Pass `-NoStart -NoStartup` to stage the files for testing. Reinstalling without `-Config` preserves an existing configuration. Supplying `-Config PATH` intentionally replaces it.
+### Windows
+
+Run in Administrator PowerShell from the extracted directory:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\stop-windows.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-windows.ps1
+powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
 ```
 
-Uninstall disables startup and stops the installed process. It retains the executable, configuration, and logs.
+Default `-Mode Auto` tests a monitor write from a temporary LocalSystem service in Session 0. If accepted, it installs `DigitalKvm` with automatic boot startup; otherwise it installs current-user login startup. `-Mode Boot` requires the probe to pass; `-Mode Login` explicitly selects login startup. Changing an existing boot installation to login startup requires Administrator access.
 
-## macOS quick start
+The probe selects the input corresponding to current switch presence. It tests driver access from the service context; visual firmware confirmation and an actual reboot remain separate tests.
 
-Copy this project to the Apple Silicon Mac. With Rust and Apple's command-line build tools available:
+Boot files: `%ProgramFiles%\DigitalKvm\digital-kvm.exe`, `%ProgramData%\DigitalKvm\config.json`, and `%ProgramData%\DigitalKvm\digital-kvm.log`. Login files are under `%LOCALAPPDATA%\DigitalKvm`.
+
+```powershell
+.\install-windows.ps1 -Mode Boot -Config .\config.json
+.\stop-windows.ps1
+.\uninstall-windows.ps1
+```
+
+`-DryRun` disables event-driven commands, but the boot capability probe still writes. `-NoStart` installs without starting; `-NoStartup` stages files without registering startup. Uninstall retains binaries, configuration, and logs.
+
+### macOS
+
+From the Apple Silicon package:
 
 ```sh
-cargo test --locked
-cargo build --release --locked
-./target/release/digital-kvm devices
-./target/release/digital-kvm status --config examples/macos.json
-./target/release/digital-kvm run --dry-run --config examples/macos.json
+sudo sh install-macos.sh
 ```
 
-After validating the Mac connection:
+For a new profile, setup asks you to switch away, wait several seconds, and switch back. It saves the hub path observed on this Mac. Discovery sends no monitor commands. If multiple unrelated hubs move, it prints the observed candidates and requires an explicit selector.
+
+Setup tests monitor access in a temporary LaunchDaemon. A passing probe installs system startup; otherwise invocation through `sudo` falls back to the invoking user's LaunchAgent. Use `--boot` to require boot access or `--login` for login startup. Remove an existing boot installation with `sudo sh uninstall-macos.sh` before explicitly selecting login startup.
 
 ```sh
-sh scripts/install-macos.sh
+sh install-macos.sh --login ./config.json
+sudo sh uninstall-macos.sh
 ```
 
-The installer builds and copies the program under `~/Library/Application Support/DigitalKvm` and registers a user LaunchAgent named `local.digital-kvm`. It starts at login and recovers from unexpected exits. To disable it, run `sh scripts/uninstall-macos.sh`. To preserve a customized configuration on reinstall, pass its path as the first argument to `install-macos.sh`.
+Boot files live under `/Library/Application Support/DigitalKvm` and `/Library/LaunchDaemons/local.digital-kvm.plist`. Login files use the corresponding home directories. `--dry-run` disables service switching; the boot probe still writes. Uninstall retains binaries, configuration, and logs.
 
-## Configuration
+### Linux
 
-Use `examples/windows.json` or `examples/macos.json` as the starting point. All USB and monitor IDs are decimal JSON numbers; hexadecimal IDs shown by Windows must be converted. `devices` and `monitors` print matching decimal values. An example USB receiver can therefore be selected as:
+From the Linux package on a systemd distribution:
+
+```sh
+sudo sh install-linux.sh
+```
+
+Setup learns the host-specific hub path when the template contains a placeholder. Boot startup uses a persistent `digital-kvm` system account and `digital-kvm-ddc` group. It loads `i2c-dev` and installs udev permissions for GPU DDC adapters. The driver must expose a DDC bus for the configured DRM connector; monitor control uses no X11 or Wayland APIs.
+
+Files: `/usr/local/lib/digital-kvm/bin/digital-kvm`, `/etc/digital-kvm/config.json`, `/var/lib/digital-kvm/digital-kvm.log`, and `/etc/systemd/system/digital-kvm.service`.
+
+```sh
+sudo systemctl status digital-kvm
+sudo journalctl -u digital-kvm
+sudo sh uninstall-linux.sh
+sh install-linux.sh --login ./config.json
+```
+
+The login alternative uses a systemd user service and requires user DDC permissions. Remove existing boot startup first. `--dry-run` tests service operation without DDC writes or refreshing GPU permissions. Uninstall retains binaries, configuration, logs, and DDC permission setup.
+
+## CLI and configuration
+
+```text
+digital-kvm devices
+digital-kvm monitors
+digital-kvm validate --config config.json
+digital-kvm learn-switch --config config.json --output learned.json
+digital-kvm status --config config.json
+digital-kvm watch --config config.json --seconds 30
+digital-kvm run --config config.json --dry-run
+digital-kvm set dp --config config.json --force
+digital-kvm probe --config config.json --force
+digital-kvm roundtrip --config config.json --hold-ms 8000
+```
+
+Options may precede or follow the command. `--force` requires a command. `watch` records USB events and never switches inputs. Stop the service before a manual monitor or roundtrip test so ownership reconciliation does not interfere. `roundtrip` arms a separate restore process before selecting the remote input.
+
+Configuration is strict JSON: unknown fields and unresolved `REPLACE_WITH_` selectors fail validation. IDs are decimal. The original hub selector is:
 
 ```json
-{ "vendor_id": 2821, "product_id": 6862, "serial": "W1MPGDD00DC9" }
+{"vendor_id":1507,"product_id":1552,"instance_contains":"USB\\VID_05E3&PID_0610\\6&23491980&0&1"}
 ```
 
-`serial` provides a stable selector across hosts. When a USB device has no real serial, Windows may print an OS-generated location identifier. Leave `serial` unset and use `instance_contains` to distinguish identical devices on a particular host. Windows and macOS location paths differ; do not copy a Windows location filter to the Mac.
+Use a real serial when available, or host-specific `instance_contains` to distinguish identical hubs. Do not copy a Windows location onto another host. Moving USB ports can change a location selector.
 
-Every monitor has its own EDID manufacturer, product, optional serial, protocol, input-value map, and readback map. Use `standard` for normal VCP `0x60` input switching, or `lg_alternate` for LG's alternate command. Names such as `dp` and `usbc` are configuration keys, not hard-coded toggles.
+Each monitor has EDID manufacturer/product, optional serial, protocol (`standard` or `lg_alternate`), `inputs`, and optional `readback` mappings. Names such as `dp` and `usbc` are configurable. The Mac example reverses local and remote inputs for complementary operation. Linux assignments depend on cabling.
 
-`validate --config PATH` checks a configuration without querying hardware. Unknown fields are rejected to catch typos. Startup absence is not a departure. `reconcile_on_start` defaults to false; set it to true to claim the local input at startup when the configured USB device is present.
+Defaults coalesce notifications for 200 ms, allow three bounded arrival attempts, and guard resume for 1500 ms. Startup absence does not cause a handoff. Supplied profiles claim the local input at startup only when the selected hub is present. Suspend suppresses USB teardown; wake establishes a fresh baseline. Monitor transports open during transitions, with identity checked before each write. Logs rotate at 256 KiB with one backup.
 
-## Event handling and resource use
+Both hosts can run complementary profiles. An unplugged or powered-off switch also looks like a departure. Validate rapid switching, sleep, and monitor power-off on the actual setup.
 
-USB callbacks enqueue small messages and return immediately. The controller samples USB presence after a configurable debounce interval, collapses duplicate notifications, and cancels retries when a newer USB event arrives. Departures get one handoff attempt; arrivals get a bounded number of reconciliation attempts. Sleep notifications cancel pending work; wake uses a guard interval before reading presence again. An OS-managed file lock prevents two instances from running with the same configuration.
+## Build and publish
 
-The Windows adapter enumerates USB device and hub interfaces with Configuration Manager and uses power callbacks without a UI/message-loop window. NVIDIA output identity is checked against EDID before each write. Writes are never broadcast across all display ports. The Mac adapter uses IOKit notifications and a CoreFoundation run loop, and selects its display transport by monitor identity.
-
-Logs default to `%LOCALAPPDATA%\DigitalKvm\digital-kvm.log` or `~/Library/Application Support/DigitalKvm/digital-kvm.log`. `watch` uses `watch.log`. Each is rotated at 256 KiB with one previous file. Input commands explicitly report whether readback verified them or only the transport accepted them.
-
-The initial Windows recorder sample used about 1.1 MiB private memory and 6.3 MiB working set, with 0 seconds measurable CPU during idle observation. This is a local measurement, not a cross-platform performance guarantee. Monitor adapters are created for transitions and dropped afterward to keep the idle footprint small.
-
-Both hosts can run complementary profiles. Duplicate commands select the same destination, but inactive-input DDC availability and rapid-switch timing must be validated on the actual monitor. A USB unplug or hardware power loss can look like a button press; configure a device that moves exclusively with the intended switch.
-
-## Build and checks
+On the Windows development machine Rust is installed at `C:\Users\peej\.cargo\bin`, without being added to PATH. `scripts/build-windows.ps1` detects Cargo there and the local LLVM-MinGW `llvm-dlltool` for the GNU toolchain:
 
 ```powershell
+& "$env:USERPROFILE\.cargo\bin\cargo.exe" --version
 powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1
 ```
 
-The build script runs formatting, behavior tests, Clippy, and the release build. Windows GNU Rust additionally needs MinGW `dlltool` or LLVM `llvm-dlltool`; Windows MSVC needs the Visual Studio C++ build tools. The distributed executable does not require the Rust toolchain.
+Windows GNU requires MinGW/LLVM-MinGW `dlltool`; Windows MSVC requires Visual Studio C++ build tools. The script checks formatting, behavior tests, Clippy, and release build, then creates `dist/windows/digital-kvm.exe` with configuration. On Mac/Linux, build as your user:
 
 ```sh
 cargo fmt -- --check
 cargo test --locked
-cargo clippy --all-targets -- -D warnings
+cargo clippy --locked --all-targets -- -D warnings
 cargo build --release --locked
 ```
 
-Tests cover startup absence, event duplication, bounce coalescing, sleep teardown, complementary host profiles, configuration validation, exact USB matching, monitor identity/checksum validation, and DDC wire packets. Live device notifications, monitor firmware behavior, and macOS private APIs require hardware checks.
+[GitHub Actions](https://github.com/Aenima4six2/digital-kvm/actions) runs native Windows x64, Mac ARM64, Linux x64, and Linux ARM64 builds on every push and PR. It tests Mac login installation/reinstallation on the native runner. Successful builds upload workflow packages; default-branch pushes publish commit-specific prereleases and tag pushes publish releases. Packages contain executable, configuration, installers, documentation, licenses, and metadata. Releases include SHA-256 checksums.
 
-## Protocol and API references
-
-- [ddcutil maintainer research on LG input switching](https://github.com/rockowitz/ddcutil/wiki/Switching-input-source-on-LG-monitors)
-- [NVIDIA NVAPI I2C documentation](https://docs.nvidia.com/nvapi/group__i2capi.html)
-- [m1ddc Apple Silicon implementation](https://github.com/waydabber/m1ddc), including the IOAVService transport and LG alternate packet format
-- [Windows Configuration Manager notifications](https://learn.microsoft.com/en-us/windows/win32/api/cfgmgr32/nf-cfgmgr32-cm_register_notification)
-- [Apple IOKit device notifications](https://developer.apple.com/documentation/iokit/1514362-ioserviceaddmatchingnotification)
-- [Apple sleep and wake notification guidance](https://developer.apple.com/library/archive/qa/qa1340/_index.html)
-
-Hardware research is preserved in `docs/hardware-evidence.json`. This repository implements the published protocol directly; it does not redistribute the Python LG-switch application.
+Tests cover transitions, sleep suppression, exact hub selection, complementary profiles, strict configuration, CLI ordering, EDID identities/checksums, and DDC packets. Native builds and service tests do not prove firmware behavior on an untested machine.

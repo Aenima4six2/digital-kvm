@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "usb": { "vendor_id": 1507, "product_id": 1552, "instance_contains": "REPLACE_WITH_LINUX_SWITCH_HUB_PATH" },
+  "local_input": "dp",
+  "remote_input": "usbc",
+  "monitors": [{
+    "manufacturer_id": 7789,
+    "product_id": 50361,
+    "serial": "602NTVSHW119",
+    "protocol": "lg_alternate",
+    "inputs": { "dp": 208, "usbc": 209 },
+    "readback": {}
+  }],
+  "debounce_ms": 200,
+  "resume_guard_ms": 1500,
+  "arrival_attempts": 3,
+  "retry_delay_ms": 250,
+  "reconcile_on_start": true
+}
